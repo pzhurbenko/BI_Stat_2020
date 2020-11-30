@@ -1,0 +1,268 @@
+---
+title: "Проект 2. Жилье в Бостоне"
+output:
+  html_document:
+    toc: true
+    toc_depth: 3
+    toc_float: true
+---
+Необходимо установить следующие пакеты:
+
+library(MASS)
+library(ggplot2)
+library(dplyr)
+library(tidyverse)
+library(mvinfluence)
+library(stats)
+library(Metrics)
+library(plotly)
+library(corrplot)
+library(lmtest)
+library(car)
+
+
+###Исследование датасета
+```{r}
+data(Boston)
+head(Boston)
+str(Boston)
+summary(Boston)
+sum(is.na(Boston))
+sum(duplicated(Boston))
+```
+
+В датасете 506 наблюдений, 14 колонок. Две переменные имеют тип int, остальные num. Нет NA значений, нет дуплицированных. 
+
+###Построение линейной модели
+
+Стандартизируем предикторы с помощью функции scale()
+
+```{r}
+lm_full <- lm(medv ~ scale(crim) + scale(zn) + scale(indus) + scale(chas) + scale(nox) + scale(rm) 
+              + scale(age) + scale(dis) + scale(rad) + scale(tax) + scale(ptratio) + scale(black) 
+              + scale(lstat), Boston)
+```
+
+```{r}
+summary(lm_full)
+```
+
+Исходя из показателя p-value можно заключить, что переменные age и indus не являются значительными
+
+###Диагностика модели
+
+##Линейность взаимосвязи
+
+Для изучения характера связи воспользуемся функцией plot
+
+```{r}
+par(mfrow = c(2,2))
+plot(lm_full, which = c(1))
+```
+
+Судя по графику "Residuals vs Fitted" видно, что взаимосвзять переменной medv с предикторами не полностью линейна. 
+Для дальнейшего изучения линейности применим функцию gam
+
+```{r}
+gam_full <- gam(medv ~ s(nox) + s(tax) + s(indus) + s(crim) + s(dis) + s(lstat) + s(rm) + 
+                    s(zn) + s(ptratio) + s(black) + s(age) + chas + rad, data = Boston) 
+#chas и rad исключены из анализа, т.к. имеют небольшое кол-во значений
+summary(gam_full)
+```
+
+Те переменные, у которых показатель edf близок к 1 , имеют линейню взаимосвязь с medv. К таким относятся zn, age, black, ptratio. Остальные влияют не линейно.
+
+Рассчитаем ещё раз, убрав переменные zn, age, black и ptratio из анализа 
+
+```{r}
+gam_full <- gam(medv ~ s(nox) + s(tax) + s(indus) + s(crim) + s(dis) + s(lstat) + s(rm) + 
+                    zn + ptratio + black + age + chas + rad, data = Boston) 
+summary(gam_full)
+```
+
+Для того, чтобы оценить характер взаимосвязи, Визуализируем данные в аппетитном бисквитном цвете
+
+```{r}
+plot(gam_full, shade = TRUE, shade.col = "bisque1", seWithMean = TRUE, scale = 0)
+```
+
+##Проверка влиятельных наблюдений
+
+Рассчитаем значение меры кука
+
+```{r}
+cooks.distance(lm_full)
+```
+
+Для удобства покажем эти значения графике
+
+```{r}
+influencePlot(lm_full, id = TRUE, main = "Influence Plot", 
+              sub = "Circle size is proportial to Cook's Distance")
+```
+
+Мы видим, что существуют выбросы, (например 372, 373, 369), и наблюдения с высоким потенциалом влияния (419, 381). Однако, влиятельные наблюдения (большие остатки + высокий потенциал влияния) отсутствуют.
+
+##Независимость наблюдений
+
+```{r}
+par(mfrow = c(1,1))
+plot(lm_full, which = c(2))
+```
+
+Cудя по графику "normal QQ" распределение остатков отличается от нормального, что говорит о зависимости наблюдений. 
+
+##Нормальность распределения и постоянство дисперсии
+
+Оценить данные показатели можно по графикам QQ-plot и Scale-Location plot
+
+```{r}
+par(mfrow = c(2,2))
+plot(lm_full, which = c(3))
+```
+А исходя из графика Scale-Location наблюдается гетероскедастичность (непостоянность дисперсии).
+
+###Постройте график предсказаний стоимости от переменной, которая обладаетнаибольшим по модулю коэффициентом
+
+Наибольшим по модулю коэфициентом обладает переменная lstat (estimated std = -3.74733)
+
+Разделим наши данные случаным образом на два датасета для обучения модели
+
+```{r}
+data(Boston)
+data_75 <- floor(0.75 * nrow(Boston))
+set.seed(53432)
+size_75<-sample(seq_len(nrow(Boston)), size = data_75)
+train <- Boston[size_75, ]
+test <- Boston[-size_75, ]
+```
+
+Построим модель
+
+```{r}
+lm.lstat = lm(medv ~ lstat, data = train)
+```
+
+Сравним стандартные ошибки нашей модели на данных train и test
+
+```{r}
+summary(lm.lstat)
+
+evaluate<-predict(lm.lstat, test) 
+rmse(evaluate, test[,14 ])
+```
+Они значительно отличаются: 6.304 против 5.951
+
+Попробуем улучшить модель, с учетом того, что взаимосвязь между medv и lstat нелинейна (см. графики gam)
+
+```{r}
+lm.lstat = lm(medv ~ lstat + I(lstat^2), data=train)
+```
+
+```{r}
+summary(lm.lstat)
+
+evaluate<-predict(lm.lstat, test) 
+rmse(evaluate, test[,14 ])
+```
+Мы достигли немного лучшего предсказания: 5.58 vs 5.35
+
+Визуализиуем модель
+
+```{r}
+dat <- data.frame(lstat = (1:35),
+                    medv = predict(lm.lstat, data.frame(lstat = (1:35))))
+plot_ly() %>% 
+      add_trace(x=~lstat, 
+                y=~medv, 
+                type="scatter", 
+                mode="lines", 
+                data = dat, 
+                name = "Predicted Value") %>%
+      add_trace(x=~lstat, 
+                y=~medv, 
+                type="scatter", 
+                mode="markers",
+                data = test, 
+                name = "Actual Value")
+```
+
+###Дополнительная часть
+
+Изучим корреляцию между переменными 
+
+```{r}
+corr_matrix<-cor(Boston)
+corrplot(corr_matrix, type="upper")
+```
+
+##Рассмотрим корреляцию переменной medv от показателя преступности crim.
+
+Для начала изучим отдельно crim
+
+```{r}
+plot_ly(data=Boston, x = ~crim, type = "histogram")
+```
+
+Мы видим что распределение отличается от нормального. 
+
+```{r}
+quantile(Boston$crim, .90)
+```
+
+Наибольший показатель преступности наблюдается в очень ограниченных округах.
+Сравним переменную medv и данные округа с высокой преступностью (90 процентиль).
+
+```{r}
+hcrim<-subset(Boston, crim>quantile(Boston$crim, .90))
+plot_ly(data=Boston, y = ~medv, name = "Весь Бостон", type="box")  %>%
+  add_boxplot(data=hcrim, y= ~medv, name = "10% территории с наибольшей преступностью", type="box")
+```
+
+Таким образом, стоимость жилья существенно снижена в районах где уровень преступности чрезвычайно высок. Очевидно, что строить жилье в таких районах экономически невыгодно. Однако, районов с такой высокой преступностью не много.
+
+```{r}
+plot_ly(data = Boston, x = ~ptratio, type = "histogram")
+```
+
+##Исследуем variance inflation фактор
+```{r}
+data(Boston)
+M <- lm(medv~.,data=Boston)
+vif(M)
+
+dwtest(Boston$tax ~ Boston$rad)
+```
+
+На основании полученных данных стоит осторожнее относиться к переменным rad и tax из-за высокого коэффициента variance inflation и наличия автокорреляции
+
+##Попробуем подобрать оптимальную модель
+
+```{r}
+model.step.b<- step(lm_full,direction='backward')
+summary(model.step.b)
+```
+
+```{r}
+nullmodel <- lm(medv~1, data = train)
+fullmodel <- lm(medv~., data = train)
+model.step.f<- step(nullmodel, scope=list(lower=nullmodel, upper=fullmodel), direction='forward')
+
+summary(model.step.f)
+```
+
+Данные методы показали необходимость исключить переменные age и indus, как это было сделано ранее в 1ой части задания.
+
+###Вывод
+
+На основании построенной модели, корреляционной матрицы и рассмотренных апсектов, следующим параметрам жилья следует уделить приоритетное значение (в порядке убывания значимости):
+
+- район постройки должен иметь минимальный уровень бедности населения (lstat)
+- жилье должно обладать бОльшим числом комнат на человека (rm)
+- важен уровень образования в районе (ptratio)
+- приближенность к хайвеям (данный параметр требует дополнительного иследования)
+- важна близость к реке
+
+Уровень преступности можно не рассмтаривать, т.к. удаленность от бедных районов автоматически подразумевает эту переменную
+
+
