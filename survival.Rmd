@@ -1,0 +1,151 @@
+---
+title: "survival"
+output: html_document
+---
+
+## Необходимые библиотеки: 
+```
+install.packages("tidyverse")
+install.packages("funModeling")
+install.packages("Hmisc")
+install.packages("survival")
+install.packages("survminer")
+install.packages("ranger")
+install.packages("ggplot2")
+install.packages("coin")
+install.packages("dplyr")
+install.packages("ggfortify")
+```
+
+## Подгрузка библиотек
+```{r, message = FALSE, warning = FALSE}
+library(tidyverse)
+library(funModeling)
+library(Hmisc)
+library(survival)
+library(survminer)
+library(ranger)
+library(ggplot2)
+library(dplyr)
+library(ggfortify)
+library(coin)
+library(dplyr)
+```
+
+## Exploration Data Analysis
+```{r}
+my_df <- ovarian
+
+basic_eda <- function(my_df)
+{
+  glimpse(my_df)
+  print(status(my_df))
+  freq(my_df) 
+  print(profiling_num(my_df))
+  plot_num(my_df)
+}
+
+basic_eda(my_df)
+```
+
++ 6 переменных (2 количесвтенные, 4 номинативные), 26 наблюдений. Пропущенные значения отсутствуют. 
+
+## Кривая Каплана-Мейера
+```{r}
+km <- with(my_df, Surv(futime, fustat))
+km
+```
+"+" означает что время жизни цензурировано
+
+### График выживаемости в зависимости от типа лечения
+```{r}
+km_fit_rx <- survfit(Surv(futime, fustat) ~ rx, data = my_df)
+summary(km_fit_rx)
+ggsurvplot(km_fit_rx, data = my_df, pval = TRUE)
+# или:
+autoplot(km_fit_rx)
+```
+
+### График выживаемости в зависимости от рецидива
+```{r}
+km_fit_re <- survfit(Surv(futime, fustat) ~  resid.ds, data = my_df)
+summary(km_fit_re)
+ggsurvplot(km_fit_re, data = my_df, pval = TRUE)
+
+# autoplot(km_fit_re)
+```
+
+### График выживаемости в зависимости от ECOG
+```{r}
+km_fit_ec <- survfit(Surv(futime, fustat) ~  ecog.ps, data = my_df)
+summary(km_fit_ec)
+ggsurvplot(km_fit_ec, data = my_df, pval = TRUE)
+
+# autoplot(km_fit_ec)
+```
+
+### График выживаемости в зависимости от возраста*
+*Возраст 50 лет выбран исходя из графика распределения возраста, где видно бимодальное распределение.
+```{r}
+my_df <- mutate(my_df, AG = ifelse((age < 50), "Young", "Old"))
+
+km_AG_fit <- survfit(Surv(futime, fustat) ~ AG, data=my_df)
+summary(km_AG_fit)
+ggsurvplot(km_AG_fit, data = my_df, pval = TRUE)
+
+# autoplot(km_AG_fit)
+```
+
+## Лог-ранк тесты
+```{r}
+survdiff(Surv(futime, fustat) ~ rx, data = my_df)
+survdiff(Surv(futime, fustat) ~ resid.ds, data = my_df)
+survdiff(Surv(futime, fustat) ~ ecog.ps, data = my_df)
+survdiff(Surv(futime, fustat) ~ AG, data = my_df)
+```
+
+```{r}
+my_df$rx <- as.factor(my_df$rx)
+my_df$resid.ds <- as.factor(my_df$resid.ds)
+my_df$ecog.ps <- as.factor(my_df$ecog.ps)
+my_df$AG <- as.factor(my_df$AG)
+
+logrank_test(Surv(futime, fustat) ~ rx, data = my_df)
+logrank_test(Surv(futime, fustat) ~ resid.ds, data = my_df)
+logrank_test(Surv(futime, fustat) ~ ecog.ps, data = my_df)
+logrank_test(Surv(futime, fustat) ~ AG, data = my_df)
+```
+
+## Модель Кокса
+```{r}
+cox <- coxph(Surv(futime, fustat) ~ age + resid.ds + rx + ecog.ps, data = my_df)
+summary(cox)
+```
+
+```{r}
+cox_fit <- survfit(cox)
+autoplot(cox_fit)
+```
+
+```{r}
+aa_fit <- aareg(Surv(futime, fustat) ~ age + resid.ds + rx + ecog.ps, data = my_df)
+autoplot(aa_fit)
+```
+
+## Отношения рисков
+```{r}
+fit.coxph <- coxph(Surv(futime, fustat) ~ AG + resid.ds + rx + ecog.ps, data = my_df)
+ggforest(fit.coxph, data = my_df)
+```
+
+## Выводы
+
+```
+Используя тесты Каплана-Мейера, было показано что влияние типа лечения на пациентов имеет p-value близкий к статистически значимому (p<0.05). Возможно при увеличении выборки, получится увеличить значимость этого показателя. Близкое значение показывает и лог-ранг тесты. Судя по этим двум подходам, остальные переменные оказываются не значимыми. 
+
+Hazard ratio  показывает, что: риск умереть для пациентов, находящихся во второй группе лечения статистически значимо ниже, чем для тех кто в первой. Также значительно влияют факторы возраста (молодой, пожилой) и наличие рецидивов
+
+Факторы риска по своему влияюнию, расположенные по убывающей: возраст, рецидив, лечение, критерии ECOG
+```
+
+
