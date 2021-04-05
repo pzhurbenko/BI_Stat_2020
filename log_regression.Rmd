@@ -1,0 +1,136 @@
+---
+title: "Log_regression"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Библиотеки
+```
+# Требуемые библиотеки
+install.packages("ROCR")
+install.packages("rio")
+install.packages("ggplot2")
+install.packages("caret")
+install.packages('e1071', dependencies=TRUE)
+```
+```{r}
+library(rio)
+library(ggplot2)
+library(caret)
+library(ROCR)
+```
+
+```{r}
+data <- import("/home/pzhurb/bioinf/learn/R/log_regress/binary.csv")
+```
+
+# EDA
+```{r}
+str(data)
+```
+Переведем переменные admit и rank в фактор
+```{r}
+data$admit <- as.factor(data$admit)
+data$rank <- as.factor(data$rank)
+str(data)
+summary(data)
+```
+Нет пропущенных значений. 2/3 студентов не попадают в ВУЗ
+
+Проверка на мультиколлинеарность
+```{r}
+plot(data$gpa,data$gre)
+cor(data$gre,data$gpa)
+```
+Мы видим, что две переменные gre и gpa не коррелируют.
+
+```{r}
+library(ggplot2)
+ggplot(data,aes(admit, gre, fill = admit))+
+  geom_boxplot()+
+  theme_bw()+
+  xlab("Admit")+
+  ylab("GRE")+
+  ggtitle("Поступление в зависимости от gpe")
+
+ggplot(data,aes(admit, gpa, fill = admit))+
+  geom_boxplot()+
+  theme_bw()+
+  xlab("Admit")+
+  ylab("GPA")+
+  ggtitle("Поступление в зависимости от gpa")
+
+ggplot(data,aes(rank,admit,fill = admit))+
+  geom_col()+
+  xlab("RANK")+
+  ylab("COUNT-ADMIT")+
+  ggtitle("Поступление в зависимости от rank")
+```
+gpa и gra имеют влияние на успешность поступления
+Чем выше значение rank тем выше значение не поступивших по отношению к поступившим. 
+
+# Построение модели
+### Разделение датасета на training и test
+```{r}
+set.seed(321)  
+ind <- createDataPartition(data$admit, p = 0.80,list = FALSE)
+train <- data[ind,] 
+test <- data[-ind,]
+```
+
+### Подбор модели
+```{r}
+set.seed(150)
+log_model <- glm(admit ~ gre + gpa + rank, data = train, family = binomial(link = "logit"))
+summary(log_model)
+```
+Все предикторы оказались значимыми 
+
+### Предсказание на тестовых данных
+```{r}
+pred <- predict(log_model, test, type = "response")
+pred <- ifelse(pred >= 0.5, 1, 0)
+```
+
+### Создание матрицы ошибок
+```{r}
+pred <- as.factor(pred)
+confusionMatrix(pred, test$admit)
+```
+Точность 70%
+
+### Расчет площади под кривой
+```{r}
+pred <- predict(log_model, test, type = "response")
+predict_temp <- prediction(pred, test$admit)
+auc.tmp <- performance(predict_temp,"auc"); auc <- as.numeric(auc.tmp@y.values)
+auc
+```
+AUC =  0.67 - сравнительно большое значение 
+
+### Получается следующее уравнение: 
+```
+log(p/1 − p) = y = -4.615877 + (0.911297 ∗ gpa) + (0.002547 * gre) + (−0.526319 ∗ rank2) + (-1.228894 ∗ rank3)+ (-1.401454 * rank4)
+где p - шанс абитуриента поступить.
+```
+
+### Проверка модели
+```{r}
+with(log_model, pchisq(null.deviance - deviance, df.null - df.residual, lower.tail = F))
+```
+p-value много меньше 0.05, наша модель статистически значима
+
+### Построение финального графика
+```{r}
+pred <- predict(log_model, data, type = "response")
+pred <- ifelse(pred >= 0.5, 1, 0)
+
+success_predict <- ifelse(data$admit == pred, "Yes", "No")
+
+ggplot(data, aes(y = gre, x = gpa)) +
+  geom_point(aes(color = success_predict)) +
+  theme_light()
+```
